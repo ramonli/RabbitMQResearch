@@ -77,7 +77,7 @@ public class RabbitMessageConsumer implements MessageConsumer {
 
                     // (process the message components here ...)
                     String message = new String(body);
-                    logger.debug(" [x] Received " + exchange + "/" + routingKey + ":'" + message + "'");
+                    logger.debug("[x] Received " + exchange + "/" + routingKey + ":'" + message + "'");
 
                     // ack message
                     this.getChannel().basicAck(deliveryTag, false);
@@ -117,6 +117,7 @@ public class RabbitMessageConsumer implements MessageConsumer {
         }
         catch (Exception e) {
             logger.warn(e);
+            this.release(connection, channel);
         }
         
         logger.debug("end of main thread");
