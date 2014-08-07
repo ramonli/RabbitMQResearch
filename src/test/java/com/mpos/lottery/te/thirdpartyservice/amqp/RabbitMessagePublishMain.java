@@ -27,18 +27,27 @@ public class RabbitMessagePublishMain {
     }
 
     protected void publish(byte[] message) throws Exception {
+        // ConnectionFactory can be reused between threads.
         ConnectionFactory factory = new ConnectionFactory();
         factory.setHost(this.getHost());
         factory.setVirtualHost("/");
-        factory.setUsername("guest");
-        factory.setPassword("guest123");
+        factory.setPort(5672);
+        factory.setUsername("amqp");
+        factory.setPassword("amqp");
         final Connection connection = factory.newConnection();
         Channel channel = connection.createChannel();
         // declare a 'topic' type of exchange
         channel.exchangeDeclare(this.exchangeName, "topic", true);
-        // If a message is published with the "mandatory" flags set, but cannot
-        // be routed, the broker will return it to the sending client (via a
-        // AMQP.Basic.Return command).
+        /**
+         * If a message is published with the "mandatory" flags set, but cannot
+         * be routed, the broker will return it to the sending client (via a
+         * AMQP.Basic.Return command).
+         * <p>
+         * For unroutable messages, the broker will issue a confirm once the
+         * exchange verifies a message won't route to any queue (returns an
+         * empty list of queues). If the message is also published as mandatory,
+         * the basic.return is sent to the client before basic.ack.
+         * */
         channel.addReturnListener(new ReturnListener() {
 
             @Override
@@ -50,9 +59,9 @@ public class RabbitMessagePublishMain {
                 /**
                  * You can't close connection before receive the RETURN or
                  * DELIVER command which issued by RabbitMQ broker, otherwise no
-                 * any listener will be invoked if events reach after the
-                 * closure of connection. <b>And no any exception thrown out in
-                 * this case...what a pitty!</b>
+                 * any listener will be invoked if events reach after the close
+                 * of connection. <b>And no any exception thrown out in this
+                 * case...what a pitty!</b>
                  * <p>
                  * OH, also can't close connection here, as if we put a channel
                  * into confirm mode, broker will mark a message as Acked if
@@ -61,17 +70,21 @@ public class RabbitMessagePublishMain {
                  * <code>ConfirmListener<code> will be called, if close connection here, <code>ConfirmListener</code>
                  * may can't work.
                  * <p>
-                 * Can close connection after call Channel#waitForConfirmsOrDie()
+                 * Can close connection after call
+                 * Channel#waitForConfirmsOrDie()
                  */
-//                RabbitMessagePublishMain.this.release(connection);
+                // RabbitMessagePublishMain.this.release(connection);
             }
 
         });
 
-        // NOTE: must call this method to enables publisher acknowledgements on
-        // this
-        // channel, otherwise the publisher process will be blocked for ever if
-        // message is delivered successfully.
+        /**
+         * This method sets the channel to use publisher acknowledgements. The
+         * client can only use this method on a non-transactional channel.
+         * <p>
+         * Refer to
+         * http://www.rabbitmq.com/amqp-0-9-1-reference.html#class.confirm
+         */
         channel.confirmSelect();
         /**
          * Implement this interface in order to be notified of Confirm events.
@@ -84,29 +97,52 @@ public class RabbitMessagePublishMain {
         channel.addConfirmListener(new ConfirmListener() {
 
             /**
+             * When will messages be confirmed?
+             * <p>
+             * For unroutable messages, the broker will issue a confirm once the
+             * exchange verifies a message won't route to any queue (returns an
+             * empty list of queues). If the message is also published as
+             * mandatory, the basic.return is sent to the client before
+             * basic.ack.
+             * <p>
+             * For routable messages, the basic.ack is sent when a message has
+             * been accepted by all the queues. For persistent messages routed
+             * to durable queues, this means persisting to disk. For mirrored
+             * queues, this means that all mirrors have accepted the message.
+             * <p>
+             * Refer to refer to
              * <ol>
-             * <li>it decides a message will not be routed to queues (if the
-             * mandatory flag is set then the basic.return is sent first) or
-             * <li>a message has reached all of the queues (and their mirrors)
-             * it was routed to, and, if it requires persistence (i.e. the
-             * message has been marked as persistent and the queue is durable),
-             * either a) has been persisted to disk, or b) has been consumed
-             * and, if necessary, acknowledged.</li>
+             * <li>http://www.rabbitmq.com/confirms.html</li>
+             * <li>
+             * http://www.rabbitmq.com/blog/2011/02/10/introducing-publisher-
+             * confirms/</li>
              * </ol>
              */
             @Override
             public void handleAck(long deliveryTag, boolean multiple) throws IOException {
+                /**
+                 * What is <code>multiple</code>?
+                 * <p>
+                 * The broker may also set the multiple field in basic.ack to
+                 * indicate that all messages up to and including the one with
+                 * the sequence number have been handled.
+                 */
                 logger.info("Ack: " + deliveryTag);
-//                RabbitMessagePublishMain.this.release(connection);
+                // RabbitMessagePublishMain.this.release(connection);
             }
 
             /**
-             * However in which this method will be called??
+             * However in which case this method will be called??
+             * <p>
+             * basic.nack will only be delivered if an internal error occurs in
+             * the Erlang process responsible for a queue.
+             * <p>
+             * refer to http://www.rabbitmq.com/confirms.html
              */
             @Override
             public void handleNack(long deliveryTag, boolean multiple) throws IOException {
                 logger.info("Nack: " + deliveryTag);
-//                RabbitMessagePublishMain.this.release(connection);
+                // RabbitMessagePublishMain.this.release(connection);
             }
 
         });
@@ -125,8 +161,8 @@ public class RabbitMessagePublishMain {
         // channel.basicPublish(this.exchangeName, "XX." +
         // RabbitMessageConsumerMain.EXCHANGE_NAME + ".-1",
         // true, MessageProperties.PERSISTENT_BASIC, message);
-        channel.basicPublish(this.exchangeName, RabbitMessageConsumerMain.EXCHANGE_NAME + ".-1",
-                true, MessageProperties.PERSISTENT_BASIC, message);
+        channel.basicPublish(this.exchangeName, RabbitMessageConsumerMain.EXCHANGE_NAME + ".-1", true,
+                MessageProperties.PERSISTENT_BASIC, message);
         // connection.close();
 
         /**
@@ -137,7 +173,10 @@ public class RabbitMessagePublishMain {
          * <p>
          * The call to Channel#waitForConfirmsOrDie() will wait until all
          * messages published since the last call have been either ack'd or
-         * nack'd by the broker. 
+         * nack'd by the broker.
+         * <p>
+         * Must call channel.confirmSelecte() first to enable confirm mode on
+         * channel.
          */
         channel.waitForConfirmsOrDie();
         // now we can close connection
@@ -163,9 +202,7 @@ public class RabbitMessagePublishMain {
     }
 
     public static void main(String[] argv) throws Exception {
-        // RabbitMessagePublishMain main = new
-        // RabbitMessagePublishMain("192.168.2.188", EXCHANGE_NAME);
-        RabbitMessagePublishMain main = new RabbitMessagePublishMain("localhost", EXCHANGE_NAME);
+        RabbitMessagePublishMain main = new RabbitMessagePublishMain("192.168.2.152", EXCHANGE_NAME);
         main.publish("hello, ramon".getBytes());
         logger.debug(" [x] Published message successfully.");
         // deleteExchange(EXCHANGE_NAME);
@@ -173,7 +210,10 @@ public class RabbitMessagePublishMain {
 
     public static void deleteExchange(String exchangeName) throws Exception {
         ConnectionFactory factory = new ConnectionFactory();
-        factory.setHost("localhost");
+        factory.setHost("192.168.100.68");
+        factory.setVirtualHost("/");
+        factory.setUsername("amqp");
+        factory.setPassword("amqp");
         Connection connection = factory.newConnection();
         Channel channel = connection.createChannel();
         channel.exchangeDelete(exchangeName);

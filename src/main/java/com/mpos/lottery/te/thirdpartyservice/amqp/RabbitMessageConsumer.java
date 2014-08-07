@@ -5,13 +5,15 @@ import java.io.IOException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
+import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
-import com.rabbitmq.client.QueueingConsumer;
+import com.rabbitmq.client.DefaultConsumer;
+import com.rabbitmq.client.Envelope;
 
-public abstract class RabbitMessageConsumer implements MessageConsumer {
-    private Log logger = LogFactory.getLog(RabbitMessageConsumer.class);
+public class RabbitMessageConsumer implements MessageConsumer {
+    private Log logger = LogFactory.getLog(RabbitMessageConsumerMain.class);
     private String host;
     // whether re-connect AMQP broker if connection is broken.
     private boolean autoReconnect = false;
@@ -42,71 +44,80 @@ public abstract class RabbitMessageConsumer implements MessageConsumer {
         factory.setUsername(this.getUsername());
         factory.setPassword(this.getPassword());
 
-        while (true) {
-            Connection connection = null;
-            Channel channel = null;
-            try {
-                connection = factory.newConnection();
-                channel = connection.createChannel();
+        Connection connection = null;
+        Channel channel = null;
+        try {
+            connection = factory.newConnection();
+            channel = connection.createChannel();
 
-                if (declareExchange)
-                    channel.exchangeDeclare(exchangeName, "topic", true);
-                if (declareQueue)
-                    // declare a durable, non-exclusive, non-autodelete queue.
-                    channel.queueDeclare(queueName, true, false, false, null);
-                for (String routingKey : routingKeys)
-                    channel.queueBind(queueName, exchangeName, routingKey);
-                // distribute workload among all consumers, consumer will
-                // pre-fetch
-                // {qos}
-                // messages to local buffer.
-                channel.basicQos(qos);
+            if (declareExchange)
+                channel.exchangeDeclare(exchangeName, "topic", true);
+            if (declareQueue)
+                // declare a durable, non-exclusive, non-autodelete queue.
+                channel.queueDeclare(queueName, true, false, false, null);
+            for (String routingKey : routingKeys)
+                channel.queueBind(queueName, exchangeName, routingKey);
+            /**
+             * distribute workload among all consumers, consumer will prefetch
+             * {qos} messages to local buffer.
+             */
+            channel.basicQos(qos);
 
-                logger.debug(" [*] Waiting for messages. To exit press CTRL+C");
+            logger.debug(" [*] Waiting for messages. To exit press CTRL+C");
 
-                QueueingConsumer consumer = new QueueingConsumer(channel);
-                // disable auto-ack. If enable auto-ack, RabbitMQ delivers a
-                // message to
-                // the customer it immediately removes it from memory.
-                boolean autoAck = false;
-                channel.basicConsume(queueName, autoAck, consumer);
+            boolean autoAck = false;
+            channel.basicConsume(queueName, autoAck, new DefaultConsumer(channel) {
+                @Override
+                public void handleDelivery(String consumerTag, Envelope envelope,
+                        AMQP.BasicProperties properties, byte[] body) throws IOException {
+                    String routingKey = envelope.getRoutingKey();
+                    String exchange = envelope.getExchange();
+                    String contentType = properties.getContentType();
+                    long deliveryTag = envelope.getDeliveryTag();
 
-                while (true) {
-                    QueueingConsumer.Delivery delivery = consumer.nextDelivery();
-                    try {
-                        RabbitMessageConsumer.this.consumeMessage(delivery);
-                    }
-                    catch (Exception e) {
-                        // the exception shouldn't affect the next message
-                        logger.info("[IGNORE]" + e.getMessage());
-                    }
-                    /**
-                     * If no call to basicAck here, once consumer close
-                     * connection, broker will move the unacked message to
-                     * redeliver queue.
-                     */
-                    channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+                    // (process the message components here ...)
+                    String message = new String(body);
+                    logger.debug(" [x] Received " + exchange + "/" + routingKey + ":'" + message + "'");
+
+                    this.getChannel().basicAck(deliveryTag, false);
                 }
-            }
-            catch (Exception e) {
-                logger.warn(e);
-            }
+            });
 
-            if (autoReconnect) {
-                this.release(connection, channel);
-                logger.info("[*] Will try to reconnect to remote host(" + this.getHost() + ") in "
-                        + this.reconnectInterval / 1000 + " seconds.");
-                Thread.sleep(this.getReconnectInterval());
-            }
-            else
-                break;
+            // -------------------------------------------------------
+            // As the handling of message is in same thread with connection
+            // management, the handling of message may stall processing of
+            // all channels on the connection.
+            // -------------------------------------------------------
+            // QueueingConsumer consumer = new QueueingConsumer(channel);
+            // // disable auto-ack. If enable auto-ack, RabbitMQ delivers a
+            // // message to
+            // // the customer it immediately removes it from memory.
+            // boolean autoAck = false;
+            // channel.basicConsume(queueName, autoAck, consumer);
+            //
+            // while (true) {
+            // QueueingConsumer.Delivery delivery = consumer.nextDelivery();
+            // try {
+            // RabbitMessageConsumer.this.consumeMessage(delivery);
+            // }
+            // catch (Exception e) {
+            // // the exception shouldn't affect the next message
+            // logger.info("[IGNORE]" + e.getMessage());
+            // }
+            // /**
+            // * If no call to basicAck here, once consumer close
+            // * connection, broker will move the unacked message to
+            // * redeliver queue.
+            // */
+            // channel.basicAck(delivery.getEnvelope().getDeliveryTag(),
+            // false);
+            // }
+            // -------------------------------------------------------
+        }
+        catch (Exception e) {
+            logger.warn(e);
         }
     }
-
-    /**
-     * Subclass should implement this method to consume message.
-     */
-    protected abstract void consumeMessage(QueueingConsumer.Delivery delivery);
 
     private void release(Connection conn, Channel channel) {
         try {
