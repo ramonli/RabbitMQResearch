@@ -79,6 +79,7 @@ public class RabbitMessageConsumer implements MessageConsumer {
                     String message = new String(body);
                     logger.debug(" [x] Received " + exchange + "/" + routingKey + ":'" + message + "'");
 
+                    // ack message
                     this.getChannel().basicAck(deliveryTag, false);
                 }
             });
@@ -117,6 +118,8 @@ public class RabbitMessageConsumer implements MessageConsumer {
         catch (Exception e) {
             logger.warn(e);
         }
+        
+        logger.debug("end of main thread");
     }
 
     private void release(Connection conn, Channel channel) {
