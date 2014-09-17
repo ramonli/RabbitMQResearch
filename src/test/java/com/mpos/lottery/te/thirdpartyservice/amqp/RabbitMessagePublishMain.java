@@ -28,12 +28,15 @@ public class RabbitMessagePublishMain {
 
     protected void publish(byte[] message) throws Exception {
         // ConnectionFactory can be reused between threads.
-        ConnectionFactory factory = new ConnectionFactory();
+        ConnectionFactory factory = new SoTimeoutConnectionFactory();
         factory.setHost(this.getHost());
-        factory.setVirtualHost("/");
+        factory.setVirtualHost("te");
         factory.setPort(5672);
         factory.setUsername("amqp");
         factory.setPassword("amqp");
+        factory.setConnectionTimeout(10 * 1000);
+        // doesn't help if server got out of space
+        //factory.setRequestedHeartbeat(1);
         final Connection connection = factory.newConnection();
         Channel channel = connection.createChannel();
         // declare a 'topic' type of exchange
@@ -178,7 +181,7 @@ public class RabbitMessagePublishMain {
          * Must call channel.confirmSelecte() first to enable confirm mode on
          * channel.
          */
-        channel.waitForConfirmsOrDie();
+        channel.waitForConfirmsOrDie(10);
         // now we can close connection
         connection.close();
     }
@@ -202,7 +205,7 @@ public class RabbitMessagePublishMain {
     }
 
     public static void main(String[] argv) throws Exception {
-        RabbitMessagePublishMain main = new RabbitMessagePublishMain("192.168.2.152", EXCHANGE_NAME);
+        RabbitMessagePublishMain main = new RabbitMessagePublishMain("192.168.2.158", EXCHANGE_NAME);
         main.publish("hello, ramon".getBytes());
         logger.debug(" [x] Published message successfully.");
         // deleteExchange(EXCHANGE_NAME);

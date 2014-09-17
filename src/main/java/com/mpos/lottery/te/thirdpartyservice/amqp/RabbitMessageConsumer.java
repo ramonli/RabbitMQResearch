@@ -79,7 +79,14 @@ public class RabbitMessageConsumer implements MessageConsumer {
                     String message = new String(body);
                     logger.debug("[x] Received " + exchange + "/" + routingKey + ":'" + message + "'");
 
-                    // ack message
+                    /**
+                     * ack message. Broker If a message is delivered to a
+                     * consumer and then requeued (because it was not
+                     * acknowledged before the consumer connection dropped, for
+                     * example) then RabbitMQ will set the redelivered flag on
+                     * it when it is delivered again (whether to the same
+                     * consumer or a different one).
+                     */
                     this.getChannel().basicAck(deliveryTag, false);
                 }
             });
@@ -119,8 +126,11 @@ public class RabbitMessageConsumer implements MessageConsumer {
             logger.warn(e);
             this.release(connection, channel);
         }
-        
-        logger.debug("end of main thread");
+
+        while (true)
+            Thread.sleep(10 * 1000);
+
+        // logger.debug("end of main thread");
     }
 
     private void release(Connection conn, Channel channel) {
