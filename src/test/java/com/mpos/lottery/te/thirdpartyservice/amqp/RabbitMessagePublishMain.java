@@ -1,13 +1,12 @@
 package com.mpos.lottery.te.thirdpartyservice.amqp;
 
 import java.io.IOException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.BlockedListener;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.ConfirmListener;
 import com.rabbitmq.client.Connection;
@@ -28,7 +27,7 @@ public class RabbitMessagePublishMain {
 
     protected void publish(byte[] message) throws Exception {
         // ConnectionFactory can be reused between threads.
-        ConnectionFactory factory = new SoTimeoutConnectionFactory();
+        ConnectionFactory factory = new ConnectionFactory();
         factory.setHost(this.getHost());
         factory.setVirtualHost("te");
         factory.setPort(5672);
@@ -38,6 +37,23 @@ public class RabbitMessagePublishMain {
         // doesn't help if server got out of space
         //factory.setRequestedHeartbeat(1);
         final Connection connection = factory.newConnection();
+        /**
+         * this is new API introduced in client v3.3.5, refer to https://www.rabbitmq.com/connection-blocked.html
+         */
+        connection.addBlockedListener(new BlockedListener(){
+
+            @Override
+            public void handleBlocked(String msg) throws IOException {
+                logger.warn("Connection BLOCKED: " + msg);
+            }
+
+            @Override
+            public void handleUnblocked() throws IOException {
+                logger.warn("Connection UNBLOCKED!)");
+            }
+            
+        });
+        
         Channel channel = connection.createChannel();
         // declare a 'topic' type of exchange
         channel.exchangeDeclare(this.exchangeName, "topic", true);
@@ -159,14 +175,10 @@ public class RabbitMessagePublishMain {
          * Diff it with the case where no 'immediate' set, in fact RabbitMQ
          * doesn't support this parameter.
          */
-        // Content-type "application/octet-stream", deliveryMode 2
-        // (persistent), priority zero
-        // channel.basicPublish(this.exchangeName, "XX." +
-        // RabbitMessageConsumerMain.EXCHANGE_NAME + ".-1",
-        // true, MessageProperties.PERSISTENT_BASIC, message);
+        logger.debug("Prepare to publish message.");
         channel.basicPublish(this.exchangeName, RabbitMessageConsumerMain.EXCHANGE_NAME + ".-1", true,
                 MessageProperties.PERSISTENT_BASIC, message);
-        // connection.close();
+        logger.debug("Publish message successfully");
 
         /**
          * Why my returnListener is not invoked?
@@ -181,7 +193,9 @@ public class RabbitMessagePublishMain {
          * Must call channel.confirmSelecte() first to enable confirm mode on
          * channel.
          */
+        logger.debug("Wait for confirmation message");
         channel.waitForConfirmsOrDie(10);
+        logger.debug("Message confirmed");
         // now we can close connection
         connection.close();
     }
