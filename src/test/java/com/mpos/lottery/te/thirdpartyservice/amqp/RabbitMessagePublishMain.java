@@ -18,29 +18,37 @@ public class RabbitMessagePublishMain {
     private static Log logger = LogFactory.getLog(RabbitMessagePublishMain.class);
     public static final String EXCHANGE_NAME = RabbitMessageConsumerMain.EXCHANGE_NAME;
     private String host;
-    private String exchangeName;
+    private String vhost;
+    private int port;
+    private String username;
+    private String password;
 
-    public RabbitMessagePublishMain(String host, String exchangeName) {
+    public RabbitMessagePublishMain(String host, String vhost, int port, String username, String password) {
         this.host = host;
-        this.exchangeName = exchangeName;
+        this.vhost = vhost;
+        this.port = port;
+        this.username = username;
+        this.password = password;
     }
 
-    protected void publish(byte[] message) throws Exception {
+    public void publish(String exchangeName, String routingKey, AMQP.BasicProperties props, byte[] message)
+            throws Exception {
         // ConnectionFactory can be reused between threads.
         ConnectionFactory factory = new ConnectionFactory();
         factory.setHost(this.getHost());
-        factory.setVirtualHost("te");
-        factory.setPort(5672);
-        factory.setUsername("amqp");
-        factory.setPassword("amqp");
+        factory.setVirtualHost(this.vhost);
+        factory.setPort(this.port);
+        factory.setUsername(this.username);
+        factory.setPassword(this.password);
         factory.setConnectionTimeout(10 * 1000);
         // doesn't help if server got out of space
-        //factory.setRequestedHeartbeat(1);
+        // factory.setRequestedHeartbeat(1);
         final Connection connection = factory.newConnection();
         /**
-         * this is new API introduced in client v3.3.5, refer to https://www.rabbitmq.com/connection-blocked.html
+         * this is new API introduced in client v3.3.5, refer to
+         * https://www.rabbitmq.com/connection-blocked.html
          */
-        connection.addBlockedListener(new BlockedListener(){
+        connection.addBlockedListener(new BlockedListener() {
 
             @Override
             public void handleBlocked(String msg) throws IOException {
@@ -51,12 +59,12 @@ public class RabbitMessagePublishMain {
             public void handleUnblocked() throws IOException {
                 logger.warn("Connection UNBLOCKED!)");
             }
-            
+
         });
-        
+
         Channel channel = connection.createChannel();
         // declare a 'topic' type of exchange
-        channel.exchangeDeclare(this.exchangeName, "topic", true);
+        channel.exchangeDeclare(exchangeName, "topic", true);
         /**
          * If a message is published with the "mandatory" flags set, but cannot
          * be routed, the broker will return it to the sending client (via a
@@ -176,8 +184,7 @@ public class RabbitMessagePublishMain {
          * doesn't support this parameter.
          */
         logger.debug("Prepare to publish message.");
-        channel.basicPublish(this.exchangeName, RabbitMessageConsumerMain.EXCHANGE_NAME + ".-1", true,
-                MessageProperties.PERSISTENT_BASIC, message);
+        channel.basicPublish(exchangeName, routingKey, props, message);
         logger.debug("Publish message successfully");
 
         /**
@@ -194,7 +201,7 @@ public class RabbitMessagePublishMain {
          * channel.
          */
         logger.debug("Wait for confirmation message");
-        channel.waitForConfirmsOrDie(10);
+        channel.waitForConfirmsOrDie(30*1000);
         logger.debug("Message confirmed");
         // now we can close connection
         connection.close();
@@ -214,13 +221,11 @@ public class RabbitMessagePublishMain {
         return host;
     }
 
-    public String getExchangeName() {
-        return exchangeName;
-    }
-
     public static void main(String[] argv) throws Exception {
-        RabbitMessagePublishMain main = new RabbitMessagePublishMain("192.168.2.158", EXCHANGE_NAME);
-        main.publish("hello, ramon".getBytes());
+        RabbitMessagePublishMain main = new RabbitMessagePublishMain("192.168.2.158", "/te", 5672, "amqp",
+                "amqp");
+        main.publish(EXCHANGE_NAME, EXCHANGE_NAME + ".-1", MessageProperties.PERSISTENT_BASIC,
+                "hello, ramon".getBytes());
         logger.debug(" [x] Published message successfully.");
         // deleteExchange(EXCHANGE_NAME);
     }
